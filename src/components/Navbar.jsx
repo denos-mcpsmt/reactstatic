@@ -7,6 +7,7 @@ function Navbar() {
                 <li><Link to="/" style={styles.navItem}>Home</Link></li>
                 <li><Link to="/about" style={styles.navItem}>About</Link></li>
                 <li><Link to="/login" style={styles.navItem}>Login</Link></li>
+                <li><Link to="/registration" style={styles.navItem}>Sign Up</Link></li>
                 <li><Link to="/courses" style={styles.navItem}>Courses</Link></li>
 
             </ul>

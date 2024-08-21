@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 import uuid
 import time
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -11,17 +12,19 @@ import datetime
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
 
-SECRET_KEY = '123456789'
+SECRET_KEY = 'DUMMYEXAMPLEKEY'
 
 # DynamoDB setup
 dynamodb = boto3.resource('dynamodb', endpoint_url='http://dynamodb-local:8000', region_name='us-west-2')
 
-def create_table():
+
+
+def create_user_table():
     table = dynamodb.create_table(
-        TableName='AppData',
+        TableName='Users',
         KeySchema=[
-            {'AttributeName': 'PK', 'KeyType': 'HASH'},
-            {'AttributeName': 'SK', 'KeyType': 'RANGE'}
+            {'AttributeName': 'PK', 'KeyType': 'HASH'},  # Partition key
+            {'AttributeName': 'SK', 'KeyType': 'RANGE'}  # Sort key
         ],
         AttributeDefinitions=[
             {'AttributeName': 'PK', 'AttributeType': 'S'},
@@ -42,38 +45,139 @@ def create_table():
         ],
         ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
     )
-    table.meta.client.get_waiter('table_exists').wait(TableName='AppData')
-    print("Table created successfully.")
+    table.meta.client.get_waiter('table_exists').wait(TableName='Users')
+    print("Users table created successfully.")
 
-table = dynamodb.Table('AppData')
 
-@app.route('/api/user', methods=['POST'])
-def create_user():
+# Create the Courses table
+def create_courses_table():
+    table = dynamodb.create_table(
+        TableName='Courses',
+        KeySchema=[
+            {
+                'AttributeName': 'CourseID',
+                'KeyType': 'HASH'  # Partition key
+            }
+        ],
+        AttributeDefinitions=[
+            {
+                'AttributeName': 'CourseID',
+                'AttributeType': 'S'
+            },
+            {
+                'AttributeName': 'Category',
+                'AttributeType': 'S'
+            }
+        ],
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 10,
+            'WriteCapacityUnits': 10
+        }
+    )
+
+    # Wait until the table exists
+    table.meta.client.get_waiter('table_exists').wait(TableName='Courses')
+
+    print(f"Table {table.table_name} created successfully!")
+
+# Ensure the Users table exists
+def ensure_table_exists(table_name):
+    try:
+        # Check if the table exists by trying to describe it
+        table = dynamodb.Table(table_name)
+        table.load()
+        print(f"Table '{table_name}' already exists.")
+        return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            # Table does not exist, create it
+            print(f"Table '{table_name}' does not exist. Creating...")
+            return False
+        else:
+            # Some other error occurred
+            print(f"Unexpected error occurred: {e}")
+            raise
+
+@app.route('/api/register', methods=['POST'])
+def register():
     data = request.json
+    email = data.get('email')
+    name = data.get('name')
+    password = data.get('password')
+    print("here")
+    # Check if user already exists
+    table = dynamodb.Table('Users')
+    table.load()
+    response = table.query(
+        IndexName='GSI1',
+        KeyConditionExpression=Key('GSI1PK').eq(f"USER#{email}")
+    )
+    if response.get('Items'):
+        return jsonify({"message": "User already exists"}), 400
+
+    # Hash the password for security
+    hashed_password = generate_password_hash(password, method='scrypt')
+
+    # Create a new user ID
     user_id = str(uuid.uuid4())
+
+    # Create the user item
     item = {
         'PK': f"USER#{user_id}",
         'SK': f"PROFILE#{user_id}",
-        'AccountType': data['account_type'],
-        'Email': data['email'],
-        'Name': data['name']
+        'GSI1PK': f"USER#{email}",
+        'GSI1SK': f"PROFILE#{user_id}",
+        'Name': name,
+        'Email': email,
+        'Password': hashed_password,
+        'AccountType': 'regular'  # You can customize this as needed
     }
+
+    # Store the user in the database
     table.put_item(Item=item)
-    return jsonify({"message": "User created successfully", "user_id": user_id}), 201
+
+    return jsonify({"message": "User registered successfully", "user_id": user_id}), 201
+
+
+# Function to add course to DynamoDB (same as before)
+def add_course(course_id, teacher, students, schedule, fee, category):
+    table = dynamodb.Table('Courses')
+
+    table.put_item(
+        Item={
+            'CourseID': course_id,
+            'Teacher': teacher,
+            'EnrolledStudents': students,
+            'Schedule': schedule,
+            'Fee': fee,
+            'Category': category
+        }
+    )
+    print(f"Course {course_id} added successfully!")
 
 @app.route('/api/course', methods=['POST'])
 def create_course():
-    data = request.json
-    course_id = str(uuid.uuid4())
-    item = {
-        'PK': f"COURSE#{course_id}",
-        'SK': f"METADATA#{course_id}",
-        'CourseTitle': data['title'],
-        'CourseDescription': data['description'],
-        'TeacherID': data['teacher_id']
-    }
-    table.put_item(Item=item)
-    return jsonify({"message": "Course created successfully", "course_id": course_id}), 201
+    try:
+        # Parse the incoming JSON data
+        data = request.get_json()
+
+        # Extract details from the JSON payload
+        course_id = data['course_id']
+        teacher = data['teacher']
+        students = data['students']
+        schedule = data['schedule']
+        fee = data['fee']
+        category = data['category']
+
+        # Add the course to DynamoDB
+        add_course(course_id, teacher, students, schedule, fee, category)
+
+        # Return a success response
+        return jsonify({'message': 'Course created successfully!'}), 201
+
+    except Exception as e:
+        # Handle errors and return an appropriate response
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/api/courses', methods=['GET'])
 def list_courses():
@@ -206,18 +310,18 @@ def login():
     return jsonify({"token": token}), 200
 
 
-@app.route('/api/user/<user_id>', methods=['PUT'])
-def update_user_profile(user_id):
-    token = request.headers.get('Authorization')
-    if not token:
-        return jsonify({"message": "Token is missing!"}), 401
 
-    try:
-        data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-    except:
-        return jsonify({"message": "Token is invalid!"}), 401
 
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({"messge":"Hello this is Darren"}), 401
+
+
+if not ensure_table_exists('Users'):
+    create_user_table()
+
+if not ensure_table_exists('Courses'):
+    create_courses_table()
 
 if __name__ == '__main__':
-    create_table()
     app.run(debug=True, host='0.0.0.0')

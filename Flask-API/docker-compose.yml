@@ -7,7 +7,10 @@ services:
     volumes:
       - .:/app
     environment:
-      - FLASK_ENV=development
+      FLASK_ENV: 'development'
+      AWS_ACCESS_KEY_ID: 'DUMMYIDEXAMPLE'
+      AWS_SECRET_ACCESS_KEY: 'DUMMYEXAMPLEKEY'
+      REGION: 'us-west-2'
     depends_on:
       - dynamodb-local
 

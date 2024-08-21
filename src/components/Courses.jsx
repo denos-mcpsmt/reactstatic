@@ -1,29 +1,43 @@
-// CourseListPage.jsx
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-const CourseListPage = () => {
+function CourseListPage() {
     const [courses, setCourses] = useState([]);
+    const navigate = useNavigate();
 
     useEffect(() => {
-        // Fetch courses from an API
-        fetch('/api/courses')
-            .then(response => response.json())
-            .then(data => setCourses(data));
+        const fetchCourses = async () => {
+            try {
+                const response = await fetch('http://localhost:5000/api/courses');
+                const data = await response.json();
+                setCourses(data);
+            } catch (error) {
+                console.error('Error fetching courses:', error);
+            }
+        };
+
+        fetchCourses();
     }, []);
+
+    const handleCreateCourse = () => {
+        navigate('/coursecreate');
+    };
 
     return (
         <div>
-            <h1>Courses</h1>
+            <h1>Course List</h1>
             <ul>
-                {courses.map(course => (
+                {courses.map((course) => (
                     <li key={course.id}>
-                        <Link to={`/courses/${course.id}`}>{course.name}</Link>
+                        <h3>{course.title}</h3>
+                        <p>{course.description}</p>
+                        <p>Teacher: {course.teacherName}</p>
                     </li>
                 ))}
             </ul>
+            <button onClick={handleCreateCourse}>Create Course</button>
         </div>
     );
-};
+}
 
 export default CourseListPage;
